@@ -1,135 +1,127 @@
 #include <AFMotor.h>
 #include <NewPing.h>
 
-#define der A0
-#define izq A1
+#define TRIGGER_PIN  A4 
+#define ECHO_PIN     A5
+#define MAX_DISTANCE 200 
 
-#define TRIG_PIN A4
-#define ECHO_PIN A5
-#define distMax 200
-int distancia = 0;
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE); 
+
+#define IR_IZQUIERDO A3  // Sensor izquierdo
+#define IR_DERECHO   A2  // Sensor derecho
+
+AF_DCMotor motorI(2);  // Motor Izquierdo
+AF_DCMotor motorD(1);  // Motor Derecho
+
+float Kp = 3.3;  // Coeficiente Proporcional
+float Ki = 0.0;  // Coeficiente Integral
+float Kd = 1.8;  // Coeficiente Derivativo
+
+float lastError = 0;
+float integral = 0;
+
 int contador = 0;
-bool obstaculo_detectado = false;
-
-AF_DCMotor motorL(2, MOTOR12_1KHZ);  // Motor izquierdo
-AF_DCMotor motorD(4, MOTOR34_1KHZ);  // Motor derecho
-NewPing Dist(TRIG_PIN, ECHO_PIN, distMax);
-
-int pwm = 100;    // Velocidad base de los motores
-double Kp = 1.0;  // Constante proporcional
-double Ki = 0.0;  // Constante integral
-double Kd = 0.0;  // Constante derivativa
-
-double integral = 0.0;
-double lastError = 0.0;
+bool casa_detectada = false;
 
 void setup() {
-  Serial.begin(9600);
-  pinMode(izq, INPUT);
-  pinMode(der, INPUT);
+  Serial.begin(115200);
+  pinMode(IR_IZQUIERDO, INPUT);
+  pinMode(IR_DERECHO, INPUT);
 }
 
 void loop() {
-  int left = digitalRead(izq);
-  int right = digitalRead(der);
-  distancia = medirDistancia();
-
-  // Si la distancia es menor o igual a 25 cm y no se ha detectado un obstáculo antes, incrementa el contador y marca que se ha detectado un obstáculo
-  if (distancia <= 25 && !obstaculo_detectado) {
-    obstaculo_detectado = true;
-    contador++;
-    if (contador == 2) {
-      stop();
-    }
-  }
-
-  // Si la distancia es mayor a 25 cm y se había detectado un obstáculo anteriormente, restablece el estado del obstáculo
-  if (distancia > 25 && obstaculo_detectado) {
-    obstaculo_detectado = false;
-  }
-
-  Serial.print("Distancia: ");
-  Serial.println(distancia);
-  Serial.print("Contador: ");
-  Serial.println(contador);
-
-
-  Serial.print("Izquierda: ");
-  Serial.println(left);
-  Serial.print("Derecha: ");
-  Serial.println(right);
-
-  delay(2000);
-
-
-  // Calcular error (diferencia entre las lecturas del sensor derecho e izquierdo)
-  double error = right - left;
-
-  // Calcular la señal de control usando PID
-  double correction = Kp * error + Ki * integral + Kd * (error - lastError);
-
-  // Actualizar término integral
-  integral += error;
-
-  // Almacenar el error actual para la próxima iteración
-  lastError = error;
-
-  // Ajustar velocidades del motor en base a la corrección
-  int leftSpeed = pwm + correction;
-  int rightSpeed = pwm - correction;
-
-  Serial.println(leftSpeed);
-  Serial.println(rightSpeed);
-
-  // Asegurar que las velocidades del motor estén dentro del rango válido
-  leftSpeed = constrain(leftSpeed, 0, 255);
-  rightSpeed = constrain(rightSpeed, 0, 255);
-
-  // Mover el robot en base a las lecturas del sensor y la corrección PID
-  if (left == 0 && right == 0) {
-    forward(leftSpeed, rightSpeed);
-  } else if (left == 0 && right == 1) {
-    turnRight(leftSpeed, rightSpeed);
-  } else if (left == 1 && right == 0) {
-    turnLeft(leftSpeed, rightSpeed);
-  } else {
+  detectarCasa();
+  if (contador == 2) {
     stop();
+    contador = 0;
+    delay(5000); // Pausa para observar el comportamiento antes de continuar
+    return; 
+  }
+
+  int sensorIzquierdo = analogRead(IR_IZQUIERDO);
+  int sensorDerecho = analogRead(IR_DERECHO);  
+
+  float error = calculateError(sensorIzquierdo, sensorDerecho);
+  float correction = getPIDCorrection(error);
+
+  applyMotorCorrection(correction);
+  delay(30);
+}
+
+void detectarCasa() {
+  int distancia_casa = sonar.ping_cm();
+  if (distancia_casa < 20 && !casa_detectada && distancia_casa != 0) {
+    contador++;
+    casa_detectada = true;
+    Serial.println("Casa detectada");
+  }
+  if (distancia_casa > 20 && casa_detectada && distancia_casa != 0) {
+    casa_detectada = false;
+    Serial.println("Casa fuera de rango");
+  }
+}
+
+float calculateError(int sensorIzquierdo, int sensorDerecho) {
+  int threshold = 200;  // Ajuste el umbral para tu configuración específica
+  float error = 0;
+  if (sensorIzquierdo > threshold) error += -5;  // Sensor izquierdo
+  if (sensorDerecho > threshold) error += 5;     // Sensor derecho
+  return error;
+}
+
+float getPIDCorrection(float error) {
+  float proportional = error;
+  integral += error;
+  float derivative = error - lastError;
+  lastError = error;
+  return Kp * proportional + Ki * integral + Kd * derivative;
+}
+
+void applyMotorCorrection(float correction) {
+  int baseSpeed = 100;
+  int maxSpeed = 130;
+
+  int leftSpeed = baseSpeed - correction;
+  int rightSpeed = baseSpeed + correction;
+
+  leftSpeed = constrain(leftSpeed, 0, maxSpeed);
+  rightSpeed = constrain(rightSpeed, 0, maxSpeed);
+
+  if (correction < -5) {
+    turnLeft(abs(leftSpeed), abs(rightSpeed));
+  } else if (correction > 5) {
+    turnRight(abs(leftSpeed), abs(rightSpeed));
+  } else {
+    forward(leftSpeed, rightSpeed);
   }
 }
 
 void forward(int leftSpeed, int rightSpeed) {
-  motorL.run(FORWARD);
-  motorL.setSpeed(leftSpeed);
+  motorI.run(FORWARD);
+  motorI.setSpeed(leftSpeed);
   motorD.run(FORWARD);
   motorD.setSpeed(rightSpeed);
 }
 
 void turnLeft(int leftSpeed, int rightSpeed) {
-  motorL.run(BACKWARD);
-  motorL.setSpeed(leftSpeed);
+  motorI.run(BACKWARD);
+  motorI.setSpeed(leftSpeed);
   motorD.run(FORWARD);
   motorD.setSpeed(rightSpeed);
+  delay(100);
 }
 
 void turnRight(int leftSpeed, int rightSpeed) {
-  motorL.run(FORWARD);
-  motorL.setSpeed(leftSpeed);
+  motorI.run(FORWARD);
+  motorI.setSpeed(leftSpeed);
   motorD.run(BACKWARD);
   motorD.setSpeed(rightSpeed);
+  delay(100);
 }
 
 void stop() {
-  motorL.run(RELEASE);
-  motorL.setSpeed(0);
+  motorI.run(RELEASE);
+  motorI.setSpeed(0);
   motorD.run(RELEASE);
   motorD.setSpeed(0);
-}
-
-int medirDistancia() {
-  delay(10);
-  int distanciaCM = Dist.ping_cm();
-  if (distanciaCM <= 0 || distanciaCM >= 250) {
-    distanciaCM = 250;
-  }
-  return distanciaCM;
 }
