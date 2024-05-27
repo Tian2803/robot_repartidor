@@ -32,8 +32,8 @@ void setup() {
 void loop() {
   detectarCasa();
   if (contador == 2) {
+    delay(100);
     stop();
-    contador = 0;
     delay(5000); // Pausa para observar el comportamiento antes de continuar
     return; 
   }
@@ -78,8 +78,8 @@ float getPIDCorrection(float error) {
 }
 
 void applyMotorCorrection(float correction) {
-  int baseSpeed = 100;
-  int maxSpeed = 130;
+  int baseSpeed = 90;
+  int maxSpeed = 120;
 
   int leftSpeed = baseSpeed - correction;
   int rightSpeed = baseSpeed + correction;
